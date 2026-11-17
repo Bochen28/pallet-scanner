@@ -1,0 +1,9 @@
+{
+  "name": "pallet-scanner-web",
+  "private": true,
+  "type": "module",
+  "description": "Pallet Scanner web app (no build step; this file only configures the tests).",
+  "scripts": {
+    "test": "node --test"
+  }
+}

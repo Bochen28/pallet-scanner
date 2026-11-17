@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pallet Scanner</title>
+  <meta name="description" content="Scan the Code-128 label of every package on a pallet and get the total and the full list.">
+  <meta name="theme-color" content="#1565C0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Pallet Scanner">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/zxing-reader.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+
+  <!-- Pallet list -->
+  <div id="list-screen" class="screen list-screen">
+    <header class="topbar">
+      <h1>Pallet Scanner</h1>
+      <div class="topbar-actions">
+        <button id="share-btn" class="text-btn" type="button" hidden>Share</button>
+        <button id="new-pallet-btn" class="text-btn" type="button" hidden>New pallet</button>
+      </div>
+    </header>
+
+    <main class="list-main">
+      <div id="install-hint" class="install-hint" hidden>
+        <p><strong>Install on iPhone:</strong> tap the Share button <span class="share-glyph" aria-hidden="true">⬆︎</span> in Safari, then <strong>Add to Home Screen</strong>.</p>
+        <button id="install-hint-close" class="icon-btn" type="button" aria-label="Hide install tip">✕</button>
+      </div>
+
+      <section class="total-card" aria-live="polite">
+        <div>
+          <div class="total-label">Packages on pallet</div>
+          <div id="total-sub" class="total-sub"></div>
+        </div>
+        <div id="total-count" class="total-count">0</div>
+      </section>
+
+      <p id="empty-state" class="empty-state">
+        No packages scanned yet.<br><br>
+        Tap START SCANNING and point the camera at the package labels. Every Code-128 barcode in view is
+        added automatically until you tap FINISH.
+      </p>
+
+      <div id="list-tools" class="list-tools" hidden>
+        <input id="search" type="search" placeholder="Find a code" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false" enterkeyhint="search">
+        <button id="sort-btn" class="chip" type="button" aria-pressed="false">A–Z</button>
+      </div>
+      <p id="filter-info" class="filter-info" hidden></p>
+      <ol id="package-list" class="package-list"></ol>
+    </main>
+
+    <footer class="bottombar">
+      <button id="start-btn" class="primary-btn" type="button">START SCANNING</button>
+    </footer>
+  </div>
+
+  <!-- Scanning mode -->
+  <div id="scan-screen" class="screen scan-screen" hidden>
+    <video id="video" playsinline muted autoplay></video>
+    <div class="scan-overlay">
+      <div class="panel counter">
+        <div>
+          <div class="panel-label">PACKAGES SCANNED</div>
+          <div id="scan-count" class="scan-count">0</div>
+        </div>
+        <button id="torch-btn" class="torch-btn" type="button" hidden>Light OFF</button>
+      </div>
+      <div id="status" class="panel status">Starting camera…</div>
+      <div class="spacer"></div>
+      <div id="recent" class="panel recent" hidden>
+        <div class="panel-label">LAST SCANNED</div>
+        <ol id="recent-list"></ol>
+      </div>
+      <button id="finish-btn" class="finish-btn" type="button">FINISH SCANNING</button>
+    </div>
+  </div>
+
+  <dialog id="confirm-dialog">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-text"></p>
+      <div class="dialog-actions">
+        <button value="cancel" class="text-btn" type="submit">Cancel</button>
+        <button value="ok" id="confirm-ok" class="text-btn danger" type="submit">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
