@@ -23,23 +23,28 @@ export class Feedback {
     this.#tone(440, 0.01, 0.0001);
   }
 
-  play(added) {
-    if (added) {
+  /** kind: "added" | "duplicate" | "notListed" (added, but not on the printed list) */
+  play(kind) {
+    if (kind === "added") {
       this.#tone(1800, 0.12, 0.6);
       this.#vibrate(70);
+    } else if (kind === "notListed") {
+      this.#tone(1100, 0.1, 0.6);
+      this.#tone(700, 0.18, 0.6, 0.14);
+      this.#vibrate([150, 80, 150]);
     } else {
       this.#tone(420, 0.3, 0.6);
       this.#vibrate([40, 90, 40]);
     }
   }
 
-  #tone(frequency, duration, volume) {
+  #tone(frequency, duration, volume, delay = 0) {
     const ctx = this.ctx;
     if (!ctx) return;
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    const t = ctx.currentTime;
+    const t = ctx.currentTime + delay;
     osc.type = "sine";
     osc.frequency.value = frequency;
     gain.gain.setValueAtTime(0.0001, t);

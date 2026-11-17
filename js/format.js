@@ -22,9 +22,36 @@ export function formatDateTime(epochMillis) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** Plain-text report: header with the total, then one numbered code per line in scan order. */
-export function buildReport(packages, now = Date.now()) {
-  const lines = [`Pallet scan ${formatDateTime(now)}`, `Total packages: ${packages.length}`, ""];
+/**
+ * Plain-text report: header with the total, the comparison with the printed list (if there is one),
+ * then one numbered code per line in scan order.
+ */
+export function buildReport(packages, now = Date.now(), comparison = null, expectedCount = 0) {
+  const lines = [`Pallet scan ${formatDateTime(now)}`, `Total packages: ${packages.length}`];
+  if (comparison) {
+    if (comparison.allGood) {
+      lines.push(`Printed list: ${expectedCount} numbers - ALL MATCH`);
+    } else {
+      lines.push(
+        `Printed list: ${expectedCount} numbers - matched ${comparison.matched.length}, ` +
+          `missing ${comparison.missing.length}, not on list ${comparison.extra.length}, ` +
+          `to check ${comparison.check.length}`,
+      );
+      if (comparison.missing.length) {
+        lines.push("", `MISSING FROM PALLET (${comparison.missing.length}):`);
+        comparison.missing.forEach((c) => lines.push(`- ${displayCode(c)}`));
+      }
+      if (comparison.extra.length) {
+        lines.push("", `SCANNED BUT NOT ON PRINTED LIST (${comparison.extra.length}):`);
+        comparison.extra.forEach((c) => lines.push(`- ${displayCode(c)}`));
+      }
+      if (comparison.check.length) {
+        lines.push("", `CHECK - ONE CHARACTER DIFFERENT (${comparison.check.length}):`);
+        comparison.check.forEach((c) => lines.push(`- list ${displayCode(c.expected)} / scanned ${displayCode(c.scanned)}`));
+      }
+    }
+  }
+  lines.push("", "SCANNED PACKAGES:");
   packages.forEach((p, i) => lines.push(`${i + 1}. ${displayCode(p.code)}`));
   return lines.join("\n") + "\n";
 }

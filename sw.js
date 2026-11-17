@@ -1,13 +1,16 @@
 // Offline support: serve the app from the cache, refresh the cache in the background.
-const CACHE = "pallet-scanner-v1";
+// Bump CACHE when releasing a new version so installed copies update right away.
+const CACHE = "pallet-scanner-v2";
 const ASSETS = [
   "./",
   "index.html",
   "styles.css",
   "manifest.webmanifest",
   "js/app.js",
+  "js/compare.js",
   "js/feedback.js",
   "js/format.js",
+  "js/ocr.js",
   "js/scan-filter.js",
   "js/scanner.js",
   "js/store.js",
@@ -17,12 +20,28 @@ const ASSETS = [
   "icons/icon-512.png",
   "icons/apple-touch-icon.png",
 ];
+// The text reader for photos of the printed list (~10 MB): downloaded in the background after
+// install so it also works offline, without delaying the first start.
+const OCR_ASSETS = [
+  "vendor/tesseract/tesseract.min.js",
+  "vendor/tesseract/worker.min.js",
+  "vendor/tesseract/tesseract-core-simd-lstm.wasm.js",
+  "vendor/tesseract/tesseract-core-lstm.wasm.js",
+  "vendor/tesseract/eng.traineddata.gz",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting()),
   );
 });
+
+async function cacheOcrAssets() {
+  const cache = await caches.open(CACHE);
+  for (const url of OCR_ASSETS) {
+    if (!(await cache.match(url))) await cache.add(url).catch(() => {});
+  }
+}
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
@@ -31,6 +50,11 @@ self.addEventListener("activate", (event) => {
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
+});
+
+// The page asks for this on every start, so an interrupted download is finished later.
+self.addEventListener("message", (event) => {
+  if (event.data === "cache-ocr") event.waitUntil(cacheOcrAssets());
 });
 
 self.addEventListener("fetch", (event) => {

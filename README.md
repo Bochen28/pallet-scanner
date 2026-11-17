@@ -25,14 +25,34 @@ No App Store, Apple ID or computer needed, and nothing expires. After the first 
 
 The list is saved on the phone after every scan; nothing is sent anywhere.
 
+## Comparing with the printed list
+
+1. On the main screen, under **Printed list**, tap **📷 Photo of list** and photograph the printed list from
+   the system (one photo per page; overlapping photos are fine, duplicates are merged). You can also pick a
+   photo you already took.
+2. The app reads the numbers (on the phone, no internet needed after the first start) and shows them with the
+   package numbers ticked. Untick anything that isn't a package number, fix a misread character with ✎, then
+   tap **ADD**. Numbers can also be typed or pasted with **Type numbers**.
+3. **Compare** shows:
+   - ✗ **Missing from pallet**: on the list, not scanned
+   - \+ **Not on printed list**: scanned, but not on the list
+   - ? **Check**: one character different (usually a misread on the photo)
+   - ✓ **Matched**
+4. While scanning, a package that isn't on the printed list shows a purple **NOT ON PRINTED LIST** banner with
+   a different sound, and the counter shows how many of the list have been found.
+
+Small differences are tolerated: spaces, dashes and brackets, a barcode with the GS1 `00` prefix in front of the
+printed SSCC, and typical photo misreads such as O/0, I/1, S/5, B/8. **Share** includes the comparison.
+
 Differences from the native apps: iPhones don't allow web apps to vibrate (you get the beep only), and the
 **Light** button appears only on phones whose browser can control the flashlight.
 
 ## Development
 
 Plain HTML/CSS/JavaScript, no build step. Barcode reading uses
-[zxing-wasm](https://github.com/Sec-ant/zxing-wasm) 2.2.4 (ZXing-C++ compiled to WebAssembly, MIT licence),
-bundled in `vendor/` so the app works offline.
+[zxing-wasm](https://github.com/Sec-ant/zxing-wasm) 2.2.4 (ZXing-C++ compiled to WebAssembly, MIT licence);
+reading the printed list uses [Tesseract.js](https://github.com/naptha/tesseract.js) 7.0.0 (Apache-2.0) with the
+English model. Both are bundled in `vendor/` so the app works offline.
 
 - Run locally: `python -m http.server 8123` in this folder, then open http://localhost:8123
   (the camera needs `localhost` or https).
