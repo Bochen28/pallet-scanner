@@ -1,6 +1,6 @@
 // Offline support: serve the app from the cache, refresh the cache in the background.
 // Bump CACHE when releasing a new version so installed copies update right away.
-const CACHE = "pallet-scanner-v4";
+const CACHE = "pallet-scanner-v5";
 const ASSETS = [
   "./",
   "index.html",
@@ -47,7 +47,8 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      // Only this app's old caches: other tools on the same site (Package Finder) keep theirs.
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("pallet-scanner-") && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
