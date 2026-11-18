@@ -44,10 +44,11 @@ export function prepareTextReader() {
         workerBlobURL: false,
         cacheMethod: "none", // the service worker caches the files
       });
-      // "Sparse text": find as many words as possible, in no particular order (suits tables).
+      // Automatic page layout: reads table rows and also a single isolated line (e.g. only the
+      // last number of the list in the frame, or bold print), which "sparse text" mode can miss.
       // A fixed resolution (close to what Tesseract estimates for these frames) stops it from
       // guessing, and logging its guess, on every frame.
-      await worker.setParameters({ tessedit_pageseg_mode: "11", user_defined_dpi: "350" });
+      await worker.setParameters({ tessedit_pageseg_mode: "3", user_defined_dpi: "350" });
       return worker;
     })().catch((err) => {
       workerPromise = null;
