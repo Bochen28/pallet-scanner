@@ -51,7 +51,7 @@
         <div id="printed-summary" class="badges" hidden></div>
         <div class="printed-actions">
           <button id="compare-btn" class="secondary-btn strong" type="button" hidden>Compare</button>
-          <button id="printed-photo-btn" class="secondary-btn" type="button">📷 Photo of list</button>
+          <button id="printed-scan-btn" class="secondary-btn" type="button">📷 Scan printed list</button>
           <button id="printed-type-btn" class="secondary-btn" type="button">Type numbers</button>
         </div>
       </section>
@@ -85,26 +85,11 @@
     </header>
     <main id="compare-main" class="list-main"></main>
     <footer class="bottombar split">
-      <button id="compare-photo-btn" class="secondary-btn big" type="button">📷 Add page</button>
+      <button id="compare-scan-btn" class="secondary-btn big" type="button">📷 Scan list</button>
       <button id="compare-type-btn" class="secondary-btn big" type="button">Type numbers</button>
     </footer>
   </div>
 
-  <!-- Numbers found on a photo -->
-  <div id="review-screen" class="screen list-screen" hidden>
-    <header class="topbar">
-      <button id="review-cancel" class="text-btn" type="button">Cancel</button>
-      <h1 class="center">Numbers found</h1>
-      <button id="review-toggle" class="text-btn" type="button">Select all</button>
-    </header>
-    <main class="list-main">
-      <p id="review-info" class="review-info"></p>
-      <ul id="review-list" class="review-list"></ul>
-    </main>
-    <footer class="bottombar">
-      <button id="review-add" class="primary-btn" type="button">ADD</button>
-    </footer>
-  </div>
 
   <!-- Scanning mode -->
   <div id="scan-screen" class="screen scan-screen" hidden>
@@ -112,32 +97,22 @@
     <div class="scan-overlay">
       <div class="panel counter">
         <div>
-          <div class="panel-label">PACKAGES SCANNED</div>
+          <div id="scan-label" class="panel-label">PACKAGES SCANNED</div>
           <div id="scan-count" class="scan-count">0</div>
           <div id="scan-onlist" class="scan-onlist" hidden></div>
         </div>
         <button id="torch-btn" class="torch-btn" type="button" hidden>Light OFF</button>
       </div>
       <div id="status" class="panel status">Starting camera…</div>
-      <div class="spacer"></div>
+      <div id="scan-spacer" class="spacer"></div>
       <div id="recent" class="panel recent" hidden>
-        <div class="panel-label">LAST SCANNED</div>
+        <div id="recent-label" class="panel-label">LAST SCANNED</div>
         <ol id="recent-list"></ol>
       </div>
       <button id="finish-btn" class="finish-btn" type="button">FINISH SCANNING</button>
     </div>
   </div>
 
-  <!-- Reading a photo -->
-  <div id="busy-overlay" class="busy-overlay" hidden>
-    <div class="busy-box">
-      <div class="spinner" aria-hidden="true"></div>
-      <div id="busy-text">Reading the list…</div>
-      <div class="progress"><div id="busy-bar"></div></div>
-    </div>
-  </div>
-
-  <input id="photo-input" type="file" accept="image/*" hidden>
 
   <dialog id="confirm-dialog">
     <form method="dialog">

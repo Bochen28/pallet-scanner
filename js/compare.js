@@ -127,58 +127,36 @@ export function comparePallet(expectedCodes, scannedCodes) {
   };
 }
 
-/** Length + digits-only/alphanumeric, after undoing OCR misreads (so "34O1..." counts as digits). */
-function shapeOf(normalized) {
-  const folded = ocrFold(normalized);
-  return `${folded.length}:${/^\d+$/.test(folded) ? "D" : "A"}`;
+/**
+ * Package labels start with 0000, or with one digit 1-9 followed by 0000 (e.g. 0000123456, 30000123456).
+ * Barcodes and printed numbers that don't look like this are ignored.
+ */
+export const PACKAGE_NUMBER = /^[1-9]?0000/;
+const MIN_LIST_NUMBER_LENGTH = 8;
+
+export function isPackageNumber(code) {
+  return PACKAGE_NUMBER.test(normalizeCode(code));
 }
 
 /**
- * Picks the package-number candidates out of OCR text from a photo of the printed list.
- * Every token with 5+ letters/digits (at least 3 digits) is a candidate; the ones that look like
- * package numbers are pre-selected:
- *  - candidates matching an already scanned package, plus everything with the same length/format;
- *  - otherwise the most common length/format on the page (the package-number column).
- * @returns {{ code: string, normalized: string, selected: boolean, alreadyOnList: boolean }[]}
+ * Package numbers among the words read from the printed list (live camera OCR).
+ * Typical misreads are undone for all-digit numbers (O->0, I->1, S->5, ...), so "OOOO1234567" is read
+ * as 00001234567. Words that don't start like a package number (dates, order numbers, quantities) are skipped.
  */
-export function extractCandidates(text, { scanned = [], existing = [] } = {}) {
+export function extractPackageNumbers(words) {
+  const tokens = Array.isArray(words) ? words : String(words).split(/\s+/);
+  const out = [];
   const seen = new Set();
-  const candidates = [];
-  for (const line of String(text).split(/\r?\n/)) {
-    for (const token of line.split(/\s+/)) {
-      const n = normalizeCode(token);
-      if (n.length < 5 || (n.match(/\d/g) || []).length < 3 || seen.has(n)) continue;
-      seen.add(n);
-      const code = token.toUpperCase().replace(/^[^A-Z0-9(]+|[^A-Z0-9)]+$/g, "");
-      candidates.push({ code, normalized: n, selected: false, alreadyOnList: false });
-    }
+  for (const word of tokens) {
+    const n = normalizeCode(word);
+    if (n.length < MIN_LIST_NUMBER_LENGTH) continue;
+    const folded = ocrFold(n);
+    const value = /^\d+$/.test(folded) ? folded : n;
+    if (!PACKAGE_NUMBER.test(folded) || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
   }
-
-  const scannedN = scanned.map(normalizeCode).filter(Boolean);
-  const existingN = existing.map(normalizeCode);
-  const matchesScan = (n) => scannedN.some((s) => matchLevel(n, s) >= Level.NEAR);
-
-  let preferred = new Set(candidates.filter((c) => scannedN.some((s) => matchLevel(c.normalized, s) >= Level.OCR)).map((c) => shapeOf(c.normalized)));
-  if (preferred.size === 0) {
-    const counts = new Map();
-    for (const c of candidates) counts.set(shapeOf(c.normalized), (counts.get(shapeOf(c.normalized)) || 0) + 1);
-    let best = null;
-    let bestCount = 1;
-    for (const [shape, count] of counts) {
-      if (count > bestCount) {
-        best = shape;
-        bestCount = count;
-      }
-    }
-    preferred = best ? new Set([best]) : null;
-  }
-
-  for (const c of candidates) {
-    c.alreadyOnList = existingN.some((e) => matchLevel(e, c.normalized) >= Level.OCR);
-    const looksRight = preferred ? preferred.has(shapeOf(c.normalized)) : c.normalized.length >= 8;
-    c.selected = !c.alreadyOnList && (looksRight || matchesScan(c.normalized));
-  }
-  return candidates;
+  return out;
 }
 
 /** Splits typed or pasted text into codes (one per line, or separated by spaces, commas, semicolons). */

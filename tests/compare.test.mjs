@@ -4,8 +4,9 @@ import assert from "node:assert/strict";
 import {
   Level,
   comparePallet,
-  extractCandidates,
+  extractPackageNumbers,
   isOnList,
+  isPackageNumber,
   matchLevel,
   normalizeCode,
   parseTypedCodes,
@@ -72,36 +73,34 @@ test("isOnList tolerates format and OCR differences but not real differences", (
   assert.equal(isOnList("PKG-0008", list), false);
 });
 
-const PRINTOUT = `
-DELIVERY NOTE 2026-11-17   Order 4711
-No. Package number        Article   Qty  Weight
-1   340123450000000018    A-100      12  14.5 kg
-2   340123450000000025    A-100      12  14.5 kg
-3   34O123450000000032    B-200       6  9.0 kg
-Page 1/1   Phone +48 123 456 789
+test("package numbers start with 0000 or one digit 1-9 then 0000", () => {
+  for (const ok of ["00001234567", "30000123456", "90000000001", "0000-1234-567", "00000"]) {
+    assert.equal(isPackageNumber(ok), true, ok);
+  }
+  for (const bad of ["0001234567", "120000123456", "5901234123457", "ABC0000123", "", "40001234"]) {
+    assert.equal(isPackageNumber(bad), false, bad);
+  }
+});
+
+const LIST_WORDS = `
+DELIVERY NOTE DN-2026-11817   Date 2026-11-17   Order 40001815
+No. Package number   Article   Qty  Weight
+1   00001234567      A-100      12  14.5 kg
+2   30000123456      A-100      12  14.5 kg
+3   OOOO1234S68      B-200       6  9.0 kg
+4   0000123      (cut off at the edge)
+Phone +48 123 456 789   Page 1/1
 `;
 
-test("extracts and pre-selects the package-number column", () => {
-  const c = extractCandidates(PRINTOUT);
-  const selected = c.filter((x) => x.selected).map((x) => x.code);
-  assert.deepEqual(selected, ["340123450000000018", "340123450000000025", "34O123450000000032"]);
-  // other numbers are offered but not selected
-  assert.ok(c.some((x) => x.normalized === "20261117" && !x.selected));
+test("only package numbers are taken from the printed list, misreads undone", () => {
+  assert.deepEqual(extractPackageNumbers(LIST_WORDS), ["00001234567", "30000123456", "00001234568"]);
 });
 
-test("pre-selection follows the format of already scanned packages", () => {
-  const c = extractCandidates("PKG-0001 PKG-0002 PKG-0003 ORDER 47110815 12345", { scanned: ["PKG-0002"] });
-  assert.deepEqual(
-    c.filter((x) => x.selected).map((x) => x.code),
-    ["PKG-0001", "PKG-0002", "PKG-0003"],
-  );
-});
-
-test("numbers already on the list are marked and not selected again", () => {
-  const c = extractCandidates(PRINTOUT, { existing: ["340123450000000018"] });
-  const first = c.find((x) => x.normalized === "340123450000000018");
-  assert.equal(first.alreadyOnList, true);
-  assert.equal(first.selected, false);
+test("words are accepted as an array too, duplicates once", () => {
+  assert.deepEqual(extractPackageNumbers(["00001234567", "0000-1234-567", "x", "20000999999"]), [
+    "00001234567",
+    "20000999999",
+  ]);
 });
 
 test("typed codes are split on lines, spaces, commas and semicolons", () => {

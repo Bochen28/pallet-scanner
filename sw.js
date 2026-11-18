@@ -1,6 +1,6 @@
 // Offline support: serve the app from the cache, refresh the cache in the background.
 // Bump CACHE when releasing a new version so installed copies update right away.
-const CACHE = "pallet-scanner-v2";
+const CACHE = "pallet-scanner-v3";
 const ASSETS = [
   "./",
   "index.html",

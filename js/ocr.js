@@ -1,13 +1,12 @@
 /**
- * Reads printed text from a photo with Tesseract.js (bundled in vendor/tesseract, works offline).
- * The text reader is loaded on first use (~7 MB, cached by the service worker afterwards).
+ * Reads printed text from camera frames with Tesseract.js (bundled in vendor/tesseract, works offline).
+ * The text reader is loaded the first time the printed list is scanned (~7 MB, cached by the
+ * service worker afterwards).
  */
 
 const BASE = new URL("../vendor/tesseract/", import.meta.url);
-const MAX_SIDE = 2400; // phone photos are ~4000 px; this keeps text sharp but recognition fast
 
 let workerPromise = null;
-let progressListener = null;
 
 function simdSupported() {
   try {
@@ -26,25 +25,30 @@ function loadScript(src) {
     const script = document.createElement("script");
     script.src = src;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error("The text reader could not be loaded. Check the internet connection once."));
+    script.onerror = () => reject(new Error("The text reader could not be loaded. Open the app once with internet."));
     document.head.append(script);
   });
 }
 
-async function getWorker() {
+/** Loads the text reader once; later calls return the same worker. */
+export function prepareTextReader() {
   if (!workerPromise) {
     workerPromise = (async () => {
       await loadScript(new URL("tesseract.min.js", BASE).href);
       const core = simdSupported() ? "tesseract-core-simd-lstm.wasm.js" : "tesseract-core-lstm.wasm.js";
-      return window.Tesseract.createWorker("eng", 1, {
+      const worker = await window.Tesseract.createWorker("eng", 1, {
         workerPath: new URL("worker.min.js", BASE).href,
         corePath: new URL(core, BASE).href,
         langPath: BASE.href.replace(/\/$/, ""),
         gzip: true,
         workerBlobURL: false,
         cacheMethod: "none", // the service worker caches the files
-        logger: (m) => progressListener?.(m),
       });
+      // "Sparse text": find as many words as possible, in no particular order (suits tables).
+      // A fixed resolution (close to what Tesseract estimates for these frames) stops it from
+      // guessing, and logging its guess, on every frame.
+      await worker.setParameters({ tessedit_pageseg_mode: "11", user_defined_dpi: "350" });
+      return worker;
     })().catch((err) => {
       workerPromise = null;
       throw err;
@@ -53,55 +57,25 @@ async function getWorker() {
   return workerPromise;
 }
 
-async function imageToCanvas(file) {
-  let source;
-  let width;
-  let height;
-  try {
-    source = await createImageBitmap(file, { imageOrientation: "from-image" });
-    width = source.width;
-    height = source.height;
-  } catch {
-    source = new Image();
-    const url = URL.createObjectURL(file);
-    try {
-      source.src = url;
-      await source.decode();
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-    width = source.naturalWidth;
-    height = source.naturalHeight;
-  }
-  const scale = Math.min(1, MAX_SIDE / Math.max(width, height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(width * scale);
-  canvas.height = Math.round(height * scale);
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-  source.close?.();
-  return canvas;
-}
-
 /**
- * Returns the text found in the image file.
- * `onProgress(stage, fraction)` reports "loading" (first use) and "reading" progress.
+ * Returns the words read in the canvas. Words touching the edge of the canvas are left out:
+ * they are usually cut off and would give a wrong (shortened) number.
  */
-export async function readTextFromImage(file, onProgress = () => {}) {
-  progressListener = (m) => {
-    if (m.status === "recognizing text") onProgress("reading", m.progress ?? 0);
-    else onProgress("loading", m.progress ?? 0);
-  };
-  try {
-    onProgress("loading", 0);
-    const canvas = await imageToCanvas(file);
-    const worker = await getWorker();
-    onProgress("reading", 0);
-    const { data } = await worker.recognize(canvas);
-    return data.text || "";
-  } finally {
-    progressListener = null;
+export async function readWords(canvas) {
+  const worker = await prepareTextReader();
+  const { data } = await worker.recognize(canvas, {}, { text: false, blocks: true });
+  const margin = Math.max(3, Math.round(Math.min(canvas.width, canvas.height) * 0.01));
+  const words = [];
+  for (const block of data.blocks ?? []) {
+    for (const paragraph of block.paragraphs ?? []) {
+      for (const line of paragraph.lines ?? []) {
+        for (const word of line.words ?? []) {
+          const b = word.bbox;
+          if (b.x0 <= margin || b.y0 <= margin || b.x1 >= canvas.width - margin || b.y1 >= canvas.height - margin) continue;
+          words.push(word.text);
+        }
+      }
+    }
   }
+  return words;
 }

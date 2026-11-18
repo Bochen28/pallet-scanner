@@ -52,3 +52,44 @@ export class ScanFilter {
     return now - track.lastSeen > timeout;
   }
 }
+
+/**
+ * Live reading of the printed list: a number is accepted once it has been read `reads` times within
+ * `window` seconds (a misread rarely repeats exactly), and is reported only once per scanning session.
+ */
+export class ReadConfirmFilter {
+  constructor({ reads = 2, window = 10 } = {}) {
+    this.reads = reads;
+    this.window = window;
+    this.pending = new Map();
+    this.accepted = new Set();
+  }
+
+  /** Feed the numbers read in one frame (`now` in seconds); returns the numbers accepted now. */
+  onFrame(numbers, now) {
+    const acceptedNow = [];
+    for (const n of new Set(numbers)) {
+      if (this.accepted.has(n)) continue;
+      const entry = this.pending.get(n);
+      if (entry && now - entry.first <= this.window) {
+        entry.count += 1;
+        if (entry.count >= this.reads) {
+          this.pending.delete(n);
+          this.accepted.add(n);
+          acceptedNow.push(n);
+        }
+      } else {
+        this.pending.set(n, { count: 1, first: now });
+        if (this.reads <= 1) {
+          this.pending.delete(n);
+          this.accepted.add(n);
+          acceptedNow.push(n);
+        }
+      }
+    }
+    for (const [n, entry] of this.pending) {
+      if (now - entry.first > this.window) this.pending.delete(n);
+    }
+    return acceptedNow;
+  }
+}

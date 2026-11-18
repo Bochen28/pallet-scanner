@@ -1,16 +1,14 @@
 import { PalletStore } from "./store.js";
 import { buildReport, displayCode, formatTime } from "./format.js";
-import { CameraError, CameraScanner, prepareDecoder } from "./scanner.js";
+import { CameraError, CameraScanner, ListScanner, prepareDecoder, screenRectToVideoRect } from "./scanner.js";
 import { Feedback } from "./feedback.js";
-import { Level, comparePallet, extractCandidates, isOnList, parseTypedCodes } from "./compare.js";
-import { readTextFromImage } from "./ocr.js";
+import { Level, comparePallet, isOnList, normalizeCode, parseTypedCodes } from "./compare.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
   listScreen: $("list-screen"),
   scanScreen: $("scan-screen"),
   compareScreen: $("compare-screen"),
-  reviewScreen: $("review-screen"),
   shareBtn: $("share-btn"),
   newPalletBtn: $("new-pallet-btn"),
   installHint: $("install-hint"),
@@ -20,7 +18,7 @@ const els = {
   printedSub: $("printed-sub"),
   printedSummary: $("printed-summary"),
   compareBtn: $("compare-btn"),
-  printedPhotoBtn: $("printed-photo-btn"),
+  printedScanBtn: $("printed-scan-btn"),
   printedTypeBtn: $("printed-type-btn"),
   emptyState: $("empty-state"),
   listTools: $("list-tools"),
@@ -32,25 +30,19 @@ const els = {
   compareBack: $("compare-back"),
   compareClear: $("compare-clear"),
   compareMain: $("compare-main"),
-  comparePhotoBtn: $("compare-photo-btn"),
+  compareScanBtn: $("compare-scan-btn"),
   compareTypeBtn: $("compare-type-btn"),
-  reviewCancel: $("review-cancel"),
-  reviewToggle: $("review-toggle"),
-  reviewInfo: $("review-info"),
-  reviewList: $("review-list"),
-  reviewAdd: $("review-add"),
   video: $("video"),
+  scanLabel: $("scan-label"),
   scanCount: $("scan-count"),
   scanOnList: $("scan-onlist"),
   torchBtn: $("torch-btn"),
   status: $("status"),
+  spacer: $("scan-spacer"),
   recent: $("recent"),
+  recentLabel: $("recent-label"),
   recentList: $("recent-list"),
   finishBtn: $("finish-btn"),
-  busy: $("busy-overlay"),
-  busyText: $("busy-text"),
-  busyBar: $("busy-bar"),
-  photoInput: $("photo-input"),
   confirmDialog: $("confirm-dialog"),
   confirmTitle: $("confirm-title"),
   confirmText: $("confirm-text"),
@@ -63,7 +55,10 @@ const els = {
   toast: $("toast"),
 };
 
-const IDLE_TEXT = "Scanning… point the camera at the package labels";
+const IDLE_TEXT = {
+  packages: "Scanning… point the camera at the package labels",
+  list: "Hold the printed list inside the frame and move slowly down it, 2–3 seconds per part.",
+};
 const HINT_KEY = "palletScanner.hideInstallHint";
 const isIOS =
   /iPhone|iPad|iPod/.test(navigator.userAgent) ||
@@ -78,14 +73,14 @@ let screen = "list";
 let query = "";
 let sortByCode = false;
 let scanning = false;
+let scanMode = "packages"; // "packages" | "list"
+let scanFrom = "list";
 let scanner = null;
 let eventSeq = 0;
 let statusTimer = 0;
+let statusIdle = true;
 let toastTimer = 0;
 let wakeLock = null;
-let photoFrom = "list";
-let reviewFrom = "list";
-let reviewCandidates = [];
 
 // ---------- helpers ----------
 
@@ -157,7 +152,6 @@ const screens = {
   list: els.listScreen,
   scan: els.scanScreen,
   compare: els.compareScreen,
-  review: els.reviewScreen,
 };
 
 function showScreen(name) {
@@ -166,7 +160,6 @@ function showScreen(name) {
   if (name === "list") renderList();
   else if (name === "compare") renderCompare();
   else if (name === "scan") renderScan();
-  else if (name === "review") renderReview();
 }
 
 function openScreen(name) {
@@ -191,7 +184,7 @@ window.addEventListener("popstate", (event) => {
 function renderPrintedCard(comparison) {
   const count = store.expected.length;
   els.compareBtn.hidden = count === 0;
-  els.printedPhotoBtn.textContent = count ? "📷 Add page" : "📷 Photo of list";
+  els.printedScanBtn.textContent = count ? "📷 Continue list scan" : "📷 Scan printed list";
   els.printedSummary.hidden = count === 0;
   if (!count) {
     els.printedSub.textContent = "Compare the pallet with the list from your system.";
@@ -312,120 +305,7 @@ els.newPalletBtn.addEventListener("click", async () => {
 
 els.compareBtn.addEventListener("click", () => openScreen("compare"));
 
-// ---------- printed list: photo, review, typing ----------
-
-function showBusy(text, fraction) {
-  els.busyText.textContent = text;
-  els.busyBar.style.width = `${Math.round(Math.max(0, Math.min(1, fraction)) * 100)}%`;
-  els.busy.hidden = false;
-}
-
-function pickPhoto(from) {
-  photoFrom = from;
-  els.photoInput.value = "";
-  els.photoInput.click();
-}
-
-els.printedPhotoBtn.addEventListener("click", () => pickPhoto("list"));
-els.comparePhotoBtn.addEventListener("click", () => pickPhoto("compare"));
-
-els.photoInput.addEventListener("change", async () => {
-  const file = els.photoInput.files?.[0];
-  if (!file) return;
-  showBusy("Opening the photo…", 0);
-  try {
-    const text = await readTextFromImage(file, (stage, fraction) => {
-      if (stage === "reading") showBusy("Reading the numbers on the list…", fraction);
-      else showBusy("Preparing the text reader (first time takes longer)…", fraction);
-    });
-    reviewCandidates = extractCandidates(text, { scanned: scannedCodes(), existing: store.expectedCodes });
-    reviewFrom = photoFrom;
-    openScreen("review");
-  } catch (err) {
-    console.error(err);
-    await confirmDialog("Could not read the photo", String(err?.message || err), "OK");
-  } finally {
-    els.busy.hidden = true;
-  }
-});
-
-function renderReview() {
-  const total = reviewCandidates.length;
-  const selectable = reviewCandidates.filter((c) => !c.alreadyOnList);
-  const selected = reviewCandidates.filter((c) => c.selected).length;
-
-  els.reviewInfo.textContent = total
-    ? `Found ${plural(total, "number")}. Ticked numbers are added to the printed list: untick anything that isn't a package number, and tap ✎ to fix a misread character.`
-    : "No package numbers were found on this photo. Take it again closer to the list, with the page flat and well lit, or type the numbers.";
-  els.reviewToggle.hidden = selectable.length === 0;
-  els.reviewToggle.textContent = selectable.length && selectable.every((c) => c.selected) ? "Select none" : "Select all";
-  els.reviewAdd.textContent = selected ? `ADD ${selected} TO PRINTED LIST` : total ? "NOTHING SELECTED" : "BACK";
-  els.reviewAdd.disabled = total > 0 && selected === 0;
-
-  const rows = reviewCandidates.map((c, index) => {
-    const li = el("li", `review-row${c.selected ? "" : " unselected"}`);
-    const box = el("input");
-    box.type = "checkbox";
-    box.id = `cand-${index}`;
-    box.checked = c.selected;
-    box.disabled = c.alreadyOnList;
-    box.dataset.index = String(index);
-    const label = el("label");
-    label.htmlFor = box.id;
-    label.append(el("span", "code", c.code));
-    if (c.alreadyOnList) label.append(el("span", "sub", "already on the printed list"));
-    const edit = el("button", "icon-btn edit", "✎");
-    edit.type = "button";
-    edit.dataset.index = String(index);
-    edit.setAttribute("aria-label", `Fix ${c.code}`);
-    li.append(box, label, edit);
-    return li;
-  });
-  els.reviewList.replaceChildren(...rows);
-}
-
-els.reviewList.addEventListener("change", (event) => {
-  const box = event.target.closest("input[type=checkbox]");
-  if (!box) return;
-  reviewCandidates[Number(box.dataset.index)].selected = box.checked;
-  renderReview();
-});
-
-els.reviewList.addEventListener("click", async (event) => {
-  const button = event.target.closest("button.edit");
-  if (!button) return;
-  const candidate = reviewCandidates[Number(button.dataset.index)];
-  const value = await inputDialog("Fix number", "Correct the number exactly as printed.", candidate.code, "Save", 2);
-  if (value == null || !value.trim()) return;
-  candidate.code = value.trim().toUpperCase();
-  candidate.selected = !candidate.alreadyOnList;
-  renderReview();
-});
-
-els.reviewToggle.addEventListener("click", () => {
-  const selectable = reviewCandidates.filter((c) => !c.alreadyOnList);
-  const selectAll = !selectable.every((c) => c.selected);
-  for (const c of selectable) c.selected = selectAll;
-  renderReview();
-});
-
-els.reviewCancel.addEventListener("click", () => closeScreen());
-
-els.reviewAdd.addEventListener("click", () => {
-  const codes = reviewCandidates.filter((c) => c.selected).map((c) => c.code);
-  if (!codes.length) {
-    closeScreen();
-    return;
-  }
-  const added = store.addExpected(codes);
-  toast(added ? `${plural(added, "number")} added to the printed list` : "Those numbers were already on the list");
-  if (reviewFrom === "compare") {
-    history.back(); // back to the comparison the photo was taken from
-  } else {
-    history.replaceState({ screen: "compare" }, "");
-    showScreen("compare");
-  }
-});
+// ---------- printed list: typing ----------
 
 async function typeNumbers() {
   const text = await inputDialog(
@@ -444,6 +324,8 @@ async function typeNumbers() {
 
 els.printedTypeBtn.addEventListener("click", typeNumbers);
 els.compareTypeBtn.addEventListener("click", typeNumbers);
+els.printedScanBtn.addEventListener("click", () => startScanning("list"));
+els.compareScanBtn.addEventListener("click", () => startScanning("list"));
 
 // ---------- comparison ----------
 
@@ -482,12 +364,14 @@ function section(title, colorClass, hint, rows) {
   return nodes;
 }
 
+const FIX = ["edit", "✎", "Fix"];
+const ERASE = ["remove", "✕", "Erase from printed list"];
+
 function renderCompare() {
   const count = store.expected.length;
   els.compareClear.hidden = count === 0;
-  els.comparePhotoBtn.textContent = count ? "📷 Add page" : "📷 Photo of list";
   if (!count) {
-    const v = el("div", "verdict empty", "No printed list yet. Take a photo of the list (one photo per page) or type the numbers.");
+    const v = el("div", "verdict empty", "No printed list yet. Tap “Scan list” and move the camera slowly down the printed list, or type the numbers.");
     els.compareMain.replaceChildren(v);
     return;
   }
@@ -498,15 +382,14 @@ function renderCompare() {
     el("small", null, `${c.matched.length} of ${plural(count, "number")} on the list matched · ${plural(store.packages.length, "package")} scanned`),
   );
   const nodes = [verdict];
-  const editActions = [["edit", "✎", "Fix"], ["remove", "✕", "Remove from list"]];
 
   if (c.missing.length) {
     nodes.push(
       ...section(
         `✗ Missing from pallet (${c.missing.length})`,
         "red",
-        "On the printed list but not scanned. Find and scan these packages, or fix the number if it was misread.",
-        c.missing.map((code) => cmpRow("✗", "red", code, null, editActions)),
+        "On the printed list but not scanned. Find and scan these packages, or fix / erase the number if it was misread.",
+        c.missing.map((code) => cmpRow("✗", "red", code, null, [FIX, ERASE])),
       ),
     );
   }
@@ -525,8 +408,8 @@ function renderCompare() {
       ...section(
         `? Check (${c.check.length})`,
         "amber",
-        "One character different: usually a misread on the photo. Compare with the label and fix the list number if needed.",
-        c.check.map((p) => cmpRow("?", "amber", p.expected, codeText("scanned: ", p.scanned), editActions)),
+        "One character different: usually a misread of the list. Compare with the label and fix the list number if needed.",
+        c.check.map((p) => cmpRow("?", "amber", p.expected, codeText("scanned: ", p.scanned), [FIX, ERASE])),
       ),
     );
   }
@@ -537,7 +420,7 @@ function renderCompare() {
         "green",
         null,
         c.matched.map((m) =>
-          cmpRow("✓", "green", m.expected, m.level === Level.EXACT ? null : codeText("scanned as ", m.scanned)),
+          cmpRow("✓", "green", m.expected, m.level === Level.EXACT ? null : codeText("scanned as ", m.scanned), [ERASE]),
         ),
       ),
     );
@@ -550,7 +433,7 @@ els.compareMain.addEventListener("click", async (event) => {
   if (!button) return;
   const code = button.dataset.code;
   if (button.dataset.action === "remove") {
-    const ok = await confirmDialog("Remove from printed list?", `Remove ${displayCode(code)} from the printed list?`, "Remove");
+    const ok = await confirmDialog("Erase from printed list?", `Erase ${displayCode(code)} from the printed list?`, "Erase");
     if (ok) store.removeExpected(code);
   } else if (button.dataset.action === "edit") {
     const value = await inputDialog("Fix number", "Correct the number exactly as printed on the list.", code, "Save", 2);
@@ -564,17 +447,42 @@ els.compareBack.addEventListener("click", () => closeScreen());
 els.compareClear.addEventListener("click", async () => {
   const ok = await confirmDialog(
     "Clear the printed list?",
-    `Removes all ${plural(store.expected.length, "number")} of the printed list. Scanned packages stay.`,
+    `Erases all ${plural(store.expected.length, "number")} of the printed list. Scanned packages stay.`,
     "Clear list",
   );
   if (ok) store.clearExpected();
 });
 
-// ---------- scanning ----------
+// ---------- scanning (packages, or the printed list) ----------
 
 function renderScan() {
+  const listMode = scanMode === "list";
+  els.recent.hidden = true;
+  if (listMode) {
+    const entries = store.expected;
+    els.scanLabel.textContent = "NUMBERS ON PRINTED LIST";
+    els.scanCount.textContent = String(entries.length);
+    els.scanOnList.hidden = true;
+    els.recentLabel.textContent = "LAST READ — TAP ✕ TO ERASE A WRONG ONE";
+    const items = [];
+    for (let i = entries.length - 1; i >= Math.max(0, entries.length - 4); i--) {
+      const li = el("li");
+      const erase = el("button", "erase", "✕");
+      erase.type = "button";
+      erase.dataset.code = entries[i].code;
+      erase.setAttribute("aria-label", `Erase ${entries[i].code}`);
+      li.append(el("span", null, `${i + 1}.`), el("span", null, displayCode(entries[i].code)), erase);
+      items.push(li);
+    }
+    els.recentList.replaceChildren(...items);
+    els.recent.hidden = entries.length === 0;
+    return;
+  }
+
   const packages = store.packages;
+  els.scanLabel.textContent = "PACKAGES SCANNED";
   els.scanCount.textContent = String(packages.length);
+  els.recentLabel.textContent = "LAST SCANNED";
   if (store.expected.length) {
     const c = currentComparison();
     let text = `On printed list: ${c.matched.length} of ${store.expected.length}`;
@@ -584,7 +492,6 @@ function renderScan() {
   } else {
     els.scanOnList.hidden = true;
   }
-  els.recent.hidden = packages.length === 0;
   const items = [];
   for (let i = packages.length - 1; i >= Math.max(0, packages.length - 4); i--) {
     const li = el("li");
@@ -592,11 +499,24 @@ function renderScan() {
     items.push(li);
   }
   els.recentList.replaceChildren(...items);
+  els.recent.hidden = packages.length === 0;
 }
+
+els.recentList.addEventListener("click", (event) => {
+  const button = event.target.closest("button.erase");
+  if (!button) return;
+  store.removeExpected(button.dataset.code);
+  toast(`Erased ${displayCode(button.dataset.code)} from the printed list`);
+});
 
 function setStatus(text, kind = "") {
   els.status.className = `panel status ${kind}`.trim();
   els.status.textContent = text;
+  statusIdle = kind === "";
+}
+
+function setIdleStatus() {
+  setStatus(IDLE_TEXT[scanMode]);
 }
 
 const EVENT_TITLES = {
@@ -604,21 +524,26 @@ const EVENT_TITLES = {
   addedListed: "✓ ADDED · ON PRINTED LIST",
   duplicate: "ALREADY SCANNED",
   notListed: "NOT ON PRINTED LIST · added to pallet",
+  listAdded: "✓ ADDED TO PRINTED LIST",
 };
 
-function showScanEvent(code, kind) {
+function showScanEvent(code, kind, extra = "") {
   const id = ++eventSeq;
   const cssClass = kind === "duplicate" ? "duplicate" : kind === "notListed" ? "notlisted" : "added";
   els.status.className = `panel status ${cssClass}`;
-  els.status.replaceChildren(el("div", "status-title", EVENT_TITLES[kind]), el("div", "status-code", displayCode(code)));
+  els.status.replaceChildren(
+    el("div", "status-title", EVENT_TITLES[kind] + extra),
+    el("div", "status-code", displayCode(code)),
+  );
+  statusIdle = false;
   clearTimeout(statusTimer);
   statusTimer = setTimeout(() => {
-    if (id === eventSeq && scanning && scanner) setStatus(IDLE_TEXT);
+    if (id === eventSeq && scanning && scanner) setIdleStatus();
   }, kind === "notListed" ? 4000 : 2500);
 }
 
 function handleCode(code) {
-  if (!scanning) return;
+  if (!scanning || scanMode !== "packages") return;
   const added = store.add(code);
   let kind = added ? "added" : "duplicate";
   if (added && store.expected.length) kind = isOnList(code, store.expectedCodes) ? "addedListed" : "notListed";
@@ -626,17 +551,36 @@ function handleCode(code) {
   showScanEvent(code, kind);
 }
 
+function handleListNumbers(numbers) {
+  if (!scanning || scanMode !== "list") return;
+  const have = new Set(store.expected.map((e) => normalizeCode(e.code)));
+  const fresh = numbers.filter((n) => !have.has(normalizeCode(n)));
+  if (!fresh.length) return;
+  store.addExpected(fresh);
+  feedback.play("added");
+  showScanEvent(fresh[fresh.length - 1], "listAdded", fresh.length > 1 ? ` (+${fresh.length - 1} more)` : "");
+}
+
+function handleListFrame(numbers) {
+  if (!scanning || scanMode !== "list" || !statusIdle) return;
+  setStatus(
+    numbers.length
+      ? `Reading… ${plural(numbers.length, "package number")} in the frame. Hold still a moment, then move on.`
+      : IDLE_TEXT.list,
+  );
+}
+
 function cameraErrorText(err) {
   if (err instanceof CameraError) {
     switch (err.kind) {
       case "denied":
         return isIOS
-          ? "Camera access is blocked. Allow it in Settings → Apps → Safari → Camera (older iPhones: Settings → Safari → Camera), then tap FINISH and START again."
-          : "Camera access is blocked. Allow the camera for this site in the browser settings, then tap FINISH and START again.";
+          ? "Camera access is blocked. Allow it in Settings → Apps → Safari → Camera (older iPhones: Settings → Safari → Camera), then tap FINISH and start again."
+          : "Camera access is blocked. Allow the camera for this site in the browser settings, then tap FINISH and start again.";
       case "missing":
         return "No camera was found on this device.";
       case "busy":
-        return "The camera is being used by another app. Close it, then tap FINISH and START again.";
+        return "The camera is being used by another app. Close it, then tap FINISH and start again.";
       case "insecure":
         return err.message;
       default:
@@ -652,7 +596,14 @@ function setTorchUi(on) {
 }
 
 async function startCamera() {
-  const current = new CameraScanner(els.video, { onCode: handleCode });
+  const current =
+    scanMode === "list"
+      ? new ListScanner(els.video, {
+          onNumbers: handleListNumbers,
+          onFrameRead: handleListFrame,
+          getCropRect: () => screenRectToVideoRect(els.video, els.spacer.getBoundingClientRect()),
+        })
+      : new CameraScanner(els.video, { onCode: handleCode });
   scanner = current;
   try {
     await current.start();
@@ -662,7 +613,7 @@ async function startCamera() {
     }
     els.torchBtn.hidden = !current.hasTorch;
     setTorchUi(false);
-    setStatus(IDLE_TEXT);
+    setIdleStatus();
   } catch (err) {
     current.stop();
     if (scanner === current) scanner = null;
@@ -690,12 +641,16 @@ function releaseWakeLock() {
   wakeLock = null;
 }
 
-async function startScanning() {
+async function startScanning(mode = "packages") {
   if (scanning) return;
   feedback.unlock(); // must happen inside the tap
   scanning = true;
+  scanMode = mode;
+  scanFrom = screen;
+  els.scanScreen.classList.toggle("list-mode", mode === "list");
+  els.spacer.classList.toggle("reading-window", mode === "list");
   els.torchBtn.hidden = true;
-  setStatus("Starting camera…");
+  setStatus(mode === "list" ? "Preparing the text reader (the first time takes a little longer)…" : "Starting camera…");
   openScreen("scan");
   requestWakeLock();
   await startCamera();
@@ -711,11 +666,22 @@ function stopScanningSession() {
 
 function finishScanning() {
   if (!scanning) return;
+  const wasListScan = scanMode === "list";
   stopScanningSession();
-  closeScreen();
+  if (wasListScan && store.expected.length) {
+    // After scanning the printed list, show the comparison.
+    if (scanFrom === "compare") {
+      history.back();
+    } else {
+      history.replaceState({ screen: "compare" }, "");
+      showScreen("compare");
+    }
+  } else {
+    closeScreen();
+  }
 }
 
-els.startBtn.addEventListener("click", startScanning);
+els.startBtn.addEventListener("click", () => startScanning("packages"));
 els.finishBtn.addEventListener("click", finishScanning);
 
 els.torchBtn.addEventListener("click", async () => {
